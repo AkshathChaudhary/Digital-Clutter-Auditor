@@ -1,0 +1,32 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Data files (DB, embeddings, trained model)
+data/
+
+# Quarantine folder
+quarantine/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Pytest cache
+.pytest_cache/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Benchmark outputs (regenerated, not tracked)
+bench/figures/
+bench/results.csv
