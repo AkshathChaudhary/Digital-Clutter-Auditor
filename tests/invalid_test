@@ -1,0 +1,11 @@
+from pathlib import Path
+from scanner.walker import scan_directory
+
+invalid_folder = Path("this_folder_does_not_exist")
+
+try:
+    records, errors = scan_directory(invalid_folder)
+
+except FileNotFoundError as exc:
+    print("Correctly handled invalid directory:")
+    print(exc)
