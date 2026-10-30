@@ -4,7 +4,9 @@ All thresholds, paths, and extension sets live here so they can be tuned
 without touching the pipeline code. Import as: from config import DB_PATH, PHASH_MAX_DISTANCE, ...
 """
 
+import os
 from pathlib import Path
+import stat
 
 # ---------------------------------------------------------------------------
 # Paths (all relative to project root; created at runtime if missing)
@@ -74,3 +76,19 @@ def kind_from_ext(ext: str) -> str:
     if ext in CODE_EXTS:
         return "code"
     return "other"
+
+
+# ---------------------------------------------------------------------------
+# Cloud stub detection (OneDrive / iCloud dehydrated placeholders)
+# ---------------------------------------------------------------------------
+FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+FILE_ATTRIBUTE_OFFLINE = 0x1000
+
+
+def is_cloud_stub(file_path: str | Path) -> bool:
+    """Check if file is a OneDrive/iCloud dehydrated placeholder."""
+    try:
+        attrs = os.stat(str(file_path)).st_file_attributes
+        return bool(attrs & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE))
+    except (AttributeError, OSError):
+        return False  # Non-Windows OS or file inaccessible

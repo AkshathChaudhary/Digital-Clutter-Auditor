@@ -137,7 +137,9 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
     text_chunks: List[str] = []
     try:
         reader = pypdf.PdfReader(str(pdf_path))
-        for page in reader.pages:
+        for idx, page in enumerate(reader.pages):
+            if idx >= 5: # limiting to 5 pages 
+                break
             page_text = page.extract_text()
             if page_text:
                 text_chunks.append(page_text)
@@ -151,7 +153,10 @@ def extract_text_from_image(image_path: Path, max_dimension: int = 1600) -> str:
     if not ENABLE_OCR:
         return ""
     try:
+        from PIL import ImageOps
         with Image.open(image_path) as img:
+            #Auto rotate phone camera photos based on EXIF tag (prevents sideways text OCR failure)
+            img = ImageOps.exif_transpose(img)
             # Convert to grayscale to improve OCR contrast and reduce memory
             gray = img.convert("L")
             # Downscale high-resolution photos to avoid OCR lag on CPU
@@ -290,6 +295,20 @@ def scan_sensitive(
         if ext == "pdf" and ENABLE_PDF_TEXT:
             extracted_text = extract_text_from_pdf(path)
         elif ext in IMAGE_EXTS and ENABLE_OCR:
+            # Intelligent OCR Gating:
+            # If CLIP tagged the image as 'photo' or 'scenery', skip expensive OCR!
+            # Beach, cat, sunset, or scenery photos contain no tax documents or bank statements.
+            if (record.category or "").lower() in {"photo", "scenery"}:
+                if record.privacy_type is not None:
+                    db.update_columns(
+                        record.id,
+                        db_path=db_path,
+                        privacy_type=None,
+                        privacy_masked=None,
+                    )
+                progress_bar.update(1)
+                continue
+
             # Optimize: Skip very small images (icons/thumbnails) under 10 KB
             if record.size >= 10_240:
                 extracted_text = extract_text_from_image(path)

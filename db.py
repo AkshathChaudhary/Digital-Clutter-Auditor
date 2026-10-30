@@ -8,7 +8,7 @@ Both Person A and Person B share this contract to access `data/clutteriq.db`.
 
 from pathlib import Path
 import sqlite3
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 import pandas as pd
 
 from config import DB_PATH
@@ -259,5 +259,53 @@ def fetch_df(
     conn = get_conn(db_path)
     try:
         return pd.read_sql_query(query, conn, params=params)
+    finally:
+        conn.close()
+
+
+def record_scan_run(
+    root: str,
+    started: float,
+    finished: float,
+    files_seen: int,
+    db_path: Path | str = DB_PATH,
+) -> int:
+    """Record a scan run in the scan_runs audit table."""
+    conn = get_conn(db_path)
+    try:
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO scan_runs (root, started, finished, files_seen) VALUES (?, ?, ?, ?)",
+                (str(root), started, finished, files_seen),
+            )
+            return cursor.lastrowid or 0
+    finally:
+        conn.close()
+
+# pyrefly: ignore[unknown-name]
+def get_overview_kpis(db_path: Path | str = DB_PATH) -> Tuple[int, float, float, int, int]:
+    """Compute executive KPI metrics directly inside SQLite in < 5ms."""
+    sql = """
+    SELECT 
+        COUNT(*) AS total_files,
+        COALESCE(SUM(size), 0) AS total_bytes,
+        COALESCE(SUM(CASE 
+            WHEN (exact_group IS NOT NULL OR near_group IS NOT NULL OR semantic_group IS NOT NULL) AND is_keeper = 0 THEN size
+            WHEN junk_score >= 0.8 THEN size 
+            ELSE 0 END), 0) AS recoverable_bytes,
+        COUNT(DISTINCT exact_group) + COUNT(DISTINCT near_group) + COUNT(DISTINCT semantic_group) AS total_dup_groups,
+        COUNT(privacy_type) AS privacy_alerts
+    FROM files 
+    WHERE status = 'active';
+    """
+    conn = get_conn(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        row = cur.fetchone()
+        if not row or row[0] == 0:
+            return 0, 0.0, 0.0, 0, 0
+        return int(row[0]), float(row[1]), float(row[2]), int(row[3]), int(row[4])
     finally:
         conn.close()

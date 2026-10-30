@@ -186,7 +186,7 @@ def train_model(
 
     cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     scoring = ["accuracy", "precision", "recall", "f1"]
-    cv_results = cross_validate(rf, X, y, cv=cv, scoring=scoring)
+    cv_results = cross_validate(rf, X, y, cv=cv, scoring=scoring, n_jobs=-1)
 
     # Train final model on full labelled set
     rf.fit(X, y)
@@ -247,7 +247,7 @@ def predict_scores(
             logger.warning(f"Failed to load model from {model_file}: {e}. Using heuristics.")
             trained_model = None
 
-    scored_count = 0
+    updates=[]
 
     if trained_model is not None:
         X = features_df[FEATURE_COLUMNS].values
@@ -259,31 +259,30 @@ def predict_scores(
 
         for i, row in features_df.iterrows():
             file_id = int(row["file_id"])
-            score = float(delete_probs[i])
+            score = round(float(delete_probs[i]), 3)
             reason = explain_ml_prediction(row, feature_importances, FEATURE_COLUMNS)
+            updates.append((score, reason, file_id))
 
-            db.update_columns(
-                file_id,
-                db_path=db_path,
-                junk_score=round(score, 3),
-                junk_reason=reason,
-            )
-            scored_count += 1
     else:
         # Cold start heuristic fallback
         for _, row in features_df.iterrows():
             file_id = int(row["file_id"])
             score, reason = heuristic_score(row)
+            updates.append((score, reason, file_id))
 
-            db.update_columns(
-                file_id,
-                db_path=db_path,
-                junk_score=score,
-                junk_reason=reason,
-            )
-            scored_count += 1
+    if updates:
+        conn = db.get_conn(db_path)
+        try:
+            with conn:
+                conn.executemany(
+                    "UPDATE files SET junk_socre = ?, junk_reason = ? WHERE id = ?",updates,
+                )
+        finally:
+            conn.close()
 
-    logger.info(f"Updated junk scores for {scored_count} files.")
+    
+    scored_count = len(updates)
+    logger.info(f"Updated junk scores for {scored_count} files in bulk.")
     return scored_count
 
 

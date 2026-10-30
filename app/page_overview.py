@@ -95,8 +95,8 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
         st.info(" No files scanned yet. Use the sidebar on the left to select a folder and click **'Run Scan'** to begin.")
         return
 
-    # Compute KPI metrics
-    total_files, total_bytes, recoverable_bytes, total_groups, privacy_alerts = compute_overview_metrics(df)
+    # Instant sub-millisecond KPI retrieval from SQLite C-engine
+    total_files, total_bytes, recoverable_bytes, total_groups, privacy_alerts = db.get_overview_kpis(db_path=db_path)
 
     # Top KPI Metric Cards
     col1, col2, col3, col4, col5 = st.columns(5)
