@@ -23,49 +23,48 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("clutteriq")
 
 
+
 def cmd_scan(root_folder: str) -> None:
-    """Execute filesystem metadata walk and populate SQLite database."""
-    target = Path(root_folder).resolve()
-    if not target.exists():
-        logger.error(f"Target folder does not exist: {target}")
-        sys.exit(1)
+    """Scan a directory and store file metadata in SQLite."""
+
+    target = Path(root_folder).expanduser()
 
     logger.info(f"Scanning directory: {target}")
-    db.init_db(DB_PATH)
 
     try:
-        from scanner.walker import scan_folder
-        count = scan_folder(str(target))
-        logger.info(f"Scan finished. Indexed {count:,} files into {DB_PATH}.")
-    except ImportError:
-        logger.warning(
-            "Person A's 'scanner/walker.py' is not yet present. "
-            "Using fallback metadata scanner."
-        )
-        from config import kind_from_ext
-        from models import FileRecord
+        from scanner.walker import scan_directory
 
-        files_seen = 0
-        for p in target.rglob("*"):
-            if p.is_file() and not p.is_symlink():
-                try:
-                    stat = p.stat()
-                    ext = p.suffix.lower().lstrip(".")
-                    rec = FileRecord(
-                        path=str(p.resolve()),
-                        name=p.name,
-                        ext=ext,
-                        kind=kind_from_ext(ext),
-                        size=stat.st_size,
-                        created=stat.st_ctime,
-                        modified=stat.st_mtime,
-                        accessed=stat.st_atime,
-                    )
-                    db.upsert_file(rec, db_path=DB_PATH)
-                    files_seen += 1
-                except Exception as e:
-                    logger.debug(f"Skipping {p}: {e}")
-        logger.info(f"Fallback scan indexed {files_seen:,} files into {DB_PATH}.")
+        # 1. Initialize the database.
+        db.init_db(DB_PATH)
+
+        # 2. Discover files and create FileRecord objects.
+        records, errors = scan_directory(target)
+
+        # 3. Save every record into SQLite.
+        saved_count = 0
+
+        for record in records:
+            db.upsert_file(record, db_path=DB_PATH)
+            saved_count += 1
+
+        # 4. Report the results.
+        logger.info(
+            f"Scan completed. Indexed {saved_count:,} files "
+            f"into {DB_PATH}."
+        )
+
+        logger.info(f"Files discovered: {len(records)}")
+        logger.info(f"Filesystem errors: {len(errors)}")
+
+        for error in errors:
+            logger.warning(
+                f"Could not process {error['path']}: {error['error']}"
+            )
+
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        logger.error(f"Invalid scan directory: {exc}")
+        sys.exit(1)
+
 
 
 def cmd_analyze() -> None:
