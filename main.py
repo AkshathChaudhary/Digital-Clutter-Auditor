@@ -5,7 +5,6 @@ Usage:
     python main.py analyze
     python main.py evaluate
     python main.py app
-    python main.py watch --folder <folder>
 """
 
 import argparse
@@ -24,6 +23,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("clutteriq")
 
 
+
 def cmd_scan(root_folder: str) -> None:
     """Scan a directory and store file metadata in SQLite."""
 
@@ -31,69 +31,39 @@ def cmd_scan(root_folder: str) -> None:
 
     logger.info(f"Scanning directory: {target}")
 
-    # Initialize database
-    db.init_db(DB_PATH)
-
-    # Try using Person B's scanner.walker.scan_directory (returns records, errors)
     try:
-        from scanner.walker import scan_directory
-        logger.info("Using scanner.walker.scan_directory (Person B implementation)...")
-        records, errors = scan_directory(target)
-
-        saved_count = 0
-        for record in records:
-            db.upsert_file(record, db_path=DB_PATH)
-            saved_count += 1
-
-        logger.info(f"Scan completed. Indexed {saved_count:,} files into {DB_PATH}.")
-        logger.info(f"Files discovered: {len(records)}")
-        logger.info(f"Filesystem errors: {len(errors)}")
-
-        for error in errors:
-            logger.warning(f"Could not process {error['path']}: {error['error']}")
-
+        from scanner.walker import scan_folder
+        count = scan_folder(str(target))
+        logger.info(f"Scan finished. Indexed {count:,} files into {DB_PATH}.")
     except ImportError:
         logger.warning(
-            "Person B's 'scanner/walker.py' not found. Trying Person A's scan_folder..."
+            "Person A's 'scanner/walker.py' is not yet present. "
+            "Using fallback metadata scanner."
         )
-        # Try Person A's scan_folder (returns count)
-        try:
-            from scanner.walker import scan_folder
-            count = scan_folder(str(target))
-            logger.info(f"Scan finished. Indexed {count:,} files into {DB_PATH}.")
-        except ImportError:
-            logger.warning(
-                "Person A's 'scanner/walker.py' is not yet present. "
-                "Using fallback metadata scanner."
-            )
-            from config import kind_from_ext
-            from models import FileRecord
+        from config import kind_from_ext
+        from models import FileRecord
 
-            files_seen = 0
-            for p in target.rglob("*"):
-                if p.is_file() and not p.is_symlink():
-                    try:
-                        stat = p.stat()
-                        ext = p.suffix.lower().lstrip(".")
-                        rec = FileRecord(
-                            path=str(p.resolve()),
-                            name=p.name,
-                            ext=ext,
-                            kind=kind_from_ext(ext),
-                            size=stat.st_size,
-                            created=stat.st_ctime,
-                            modified=stat.st_mtime,
-                            accessed=stat.st_atime,
-                        )
-                        db.upsert_file(rec, db_path=DB_PATH)
-                        files_seen += 1
-                    except Exception as e:
-                        logger.debug(f"Skipping {p}: {e}")
-            logger.info(f"Fallback scan indexed {files_seen:,} files into {DB_PATH}.")
-
-    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
-        logger.error(f"Invalid scan directory: {exc}")
-        sys.exit(1)
+        files_seen = 0
+        for p in target.rglob("*"):
+            if p.is_file() and not p.is_symlink():
+                try:
+                    stat = p.stat()
+                    ext = p.suffix.lower().lstrip(".")
+                    rec = FileRecord(
+                        path=str(p.resolve()),
+                        name=p.name,
+                        ext=ext,
+                        kind=kind_from_ext(ext),
+                        size=stat.st_size,
+                        created=stat.st_ctime,
+                        modified=stat.st_mtime,
+                        accessed=stat.st_atime,
+                    )
+                    db.upsert_file(rec, db_path=DB_PATH)
+                    files_seen += 1
+                except Exception as e:
+                    logger.debug(f"Skipping {p}: {e}")
+        logger.info(f"Fallback scan indexed {files_seen:,} files into {DB_PATH}.")
 
 
 def cmd_analyze() -> None:
@@ -160,7 +130,7 @@ def cmd_app() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Real-Time Directory Watcher (watchdog) - Person A's feature
+# Real-Time Directory Watcher (watchdog)
 # ---------------------------------------------------------------------------
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -251,7 +221,7 @@ def main() -> None:
     scan_parser = subparsers.add_parser("scan", help="Scan a directory and index file metadata")
     scan_parser.add_argument("--root", required=True, help="Absolute path to folder to scan")
 
-    # 'watch' command (Person A)
+    # 'watch' command
     watch_parser = subparsers.add_parser("watch", help="Monitor folder in real-time for duplicates and privacy risks")
     watch_parser.add_argument("--folder", required=True, help="Folder to monitor (e.g. Downloads)")
 
@@ -282,3 +252,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
