@@ -6,6 +6,8 @@ without touching the pipeline code. Import as: from config import DB_PATH, PHASH
 
 import os
 from pathlib import Path
+
+QUARANTINE_DIR = Path("data/quarantine")
 import stat
 
 # ---------------------------------------------------------------------------

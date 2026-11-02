@@ -263,6 +263,103 @@ def fetch_df(
         conn.close()
 
 
+def add_quarantine_record(
+    file_id: int,
+    original_path: str,
+    quarantine_path: str,
+    sha256: str,
+    moved_at: float,
+    db_path: Path | str = DB_PATH,
+) -> int:
+    """Record a successfully quarantined file."""
+
+    conn = get_conn(db_path)
+
+    try:
+        with conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO quarantine_log (
+                    file_id,
+                    original_path,
+                    quarantine_path,
+                    sha256,
+                    moved_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    file_id,
+                    original_path,
+                    quarantine_path,
+                    sha256,
+                    moved_at,
+                ),
+            )
+
+            return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def get_quarantine_record(
+    quarantine_id: int,
+    db_path: Path | str = DB_PATH,
+) -> Optional[dict]:
+    """Retrieve one quarantine record by its ID."""
+
+    conn = get_conn(db_path)
+
+    try:
+        conn.row_factory = sqlite3.Row
+
+        row = conn.execute(
+            "SELECT * FROM quarantine_log WHERE id = ?",
+            (quarantine_id,),
+        ).fetchone()
+
+        return dict(row) if row else None
+
+    finally:
+        conn.close()
+
+def mark_quarantine_restored(
+    quarantine_id: int,
+    file_id: int,
+    restored_at: float,
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Mark a quarantine record and its file as restored."""
+
+    conn = get_conn(db_path)
+
+    try:
+        with conn:
+            cursor = conn.execute(
+                """
+                UPDATE quarantine_log
+                SET restored_at = ?
+                WHERE id = ? AND restored_at IS NULL
+                """,
+                (restored_at, quarantine_id),
+            )
+
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    "Quarantine record not found or already restored."
+                )
+
+            conn.execute(
+                """
+                UPDATE files
+                SET status = 'restored'
+                WHERE id = ?
+                """,
+                (file_id,),
+            )
+
+    finally:
+        conn.close()
 def record_scan_run(
     root: str,
     started: float,
