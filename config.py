@@ -5,6 +5,9 @@ without touching the pipeline code. Import as: from config import DB_PATH, PHASH
 """
 
 from pathlib import Path
+from pathlib import Path
+
+QUARANTINE_DIR = Path("data/quarantine")
 
 # ---------------------------------------------------------------------------
 # Paths (all relative to project root; created at runtime if missing)
