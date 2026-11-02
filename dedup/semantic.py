@@ -39,11 +39,18 @@ _CLIP_MODEL: Optional[SentenceTransformer] = None
 
 
 def get_clip_model(model_name: str = CLIP_MODEL_NAME) -> SentenceTransformer:
-    """Load and return the CLIP model instance (cached in memory)."""
+    """Load and return the CLIP model instance with automatic hardware acceleration."""
     global _CLIP_MODEL
     if _CLIP_MODEL is None:
-        logger.info(f"Loading CLIP model '{model_name}' on CPU...")
-        _CLIP_MODEL = SentenceTransformer(model_name, device="cpu")
+        import torch
+        if torch.cuda.is_available():
+            device="cuda"
+        elif hasattr(torch.backends,"mps") and torch.backends.mps.is_available():
+            device="mps"
+        else:
+            device="cpu"
+        logger.info(f"Loading CLIP model '{model_name}' on {device.upper()}...")
+        _CLIP_MODEL = SentenceTransformer(model_name, device=device)
     return _CLIP_MODEL
 
 
@@ -171,15 +178,17 @@ def compute_embeddings(
         if not batch_pil_images:
             progress_bar.update(len(batch_records))
             continue
-
-        # Inference: encode batch with CLIP and normalize to unit length (L2 norm = 1.0)
-        batch_embeddings = model.encode(
-            batch_pil_images,
-            batch_size=len(batch_pil_images),
-            convert_to_numpy=True,
-            normalize_embeddings=True,  # Crucial: unit vectors enable fast dot product similarity
-            show_progress_bar=False,
-        )
+        
+        import torch 
+        with torch.inference_mode():
+            # Inference: encode batch with CLIP and normalize to unit length (L2 norm = 1.0)
+            batch_embeddings = model.encode(
+                batch_pil_images,
+                batch_size=len(batch_pil_images),
+                convert_to_numpy=True,
+                normalize_embeddings=True,  # Crucial: unit vectors enable fast dot product similarity
+                show_progress_bar=False,
+            )
 
         for record, vec in zip(valid_records_in_batch, batch_embeddings):
             new_vectors.append(vec.astype(np.float32))
@@ -254,19 +263,37 @@ def cluster_semantic(
     indices = [img.emb_index for img in valid_images]
     image_ids = [img.id for img in valid_images]
     X = embeddings[indices]  # Shape: (N, 512)
-
-    # Pairwise Cosine Similarity:
-    # Since embeddings are L2-normalized (length = 1.0), Cosine Similarity is simply X @ X.T
-    sim_matrix = np.dot(X, X.T)  # Shape: (N, N)
-
-    # Initialize Union-Find structure
     uf = UnionFind(image_ids)
-
     n = len(valid_images)
-    for i in range(n):
-        for j in range(i + 1, n):
-            if sim_matrix[i, j] >= sim_threshold:
-                uf.union(image_ids[i], image_ids[j])
+
+    #Try HNSW graph search first (O(log N)scaling for large libraries)
+    used_hnsw = False
+    try:
+        import hnswlib
+        if n>=100: #HNSW graph overhead is best for >=100 images
+            max_dist = 1.0 - sim_threshold #Cosine distance = 1-cosine_similarity
+            k= min(15,n)
+            p = hnswlib.Index(space='cosine', dim=X.shape[1])
+            p.init_index(max_elements=n, ef_construction=200, M=16)
+            p.add_items(X, np.arange(n))
+            p.set_ef(50)
+            labels, distances = p.knn_query(X, k=k)
+            for i in range(n):
+                for neighbour_idx, dist in zip(labels[i],distances[i]):
+                    if neighbour_idx != i and dist <= max_dist:
+                        uf.union(image_ids[i],image_ids[neighbour_idx])
+            used_hnsw = True
+            logger.info(f"Clustered {n} images using HNSW graph in O(log N) time.")
+    except ImportError:
+        pass
+
+    #Fast NumPy matrix fallback if < 100 images or hnswlib not installed
+    if not used_hnsw:
+        sim_matrix = np.dot(X, X.T)
+        for i in range(n):
+            for j in range(i+1,n):
+                if sim_matrix[i,j]>=sim_threshold:
+                    uf.union(image_ids[i], image_ids[j])
 
     # Extract connected components (groups)
     components = uf.get_components()

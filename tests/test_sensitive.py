@@ -182,7 +182,76 @@ def test_end_to_end_privacy_scan():
     print(" End-to-end privacy scan tests passed successfully!")
 
 
+def test_ocr_category_gating():
+    print("\nTesting Intelligent OCR Category Gating ('photo' / 'scenery')...")
+    temp_dir_kwargs = {}
+    if sys.version_info >= (3, 10):
+        temp_dir_kwargs["ignore_cleanup_errors"] = True
+
+    with tempfile.TemporaryDirectory(**temp_dir_kwargs) as tmpdir:
+        tmp_path = Path(tmpdir)
+        test_db = tmp_path / "test_clutteriq.db"
+        db.init_db(test_db)
+
+        # Create dummy image files (> 10KB so size filter wouldn't trigger)
+        img1 = tmp_path / "sunset.jpg"
+        img1.write_bytes(b"\x00" * 20_000)
+
+        img2 = tmp_path / "mountains.png"
+        img2.write_bytes(b"\x00" * 20_000)
+
+        now = time.time()
+        r1 = FileRecord(
+            path=str(img1),
+            name="sunset.jpg",
+            ext="jpg",
+            kind="image",
+            size=20_000,
+            category="photo",
+            modified=now,
+        )
+        r2 = FileRecord(
+            path=str(img2),
+            name="mountains.png",
+            ext="png",
+            kind="image",
+            size=20_000,
+            category="scenery",
+            modified=now,
+        )
+
+        id1 = db.upsert_file(r1, db_path=test_db)
+        id2 = db.upsert_file(r2, db_path=test_db)
+
+        # Mock extract_text_from_image to verify it is NEVER called for 'photo' or 'scenery'
+        import privacy.sensitive as sensitive_mod
+
+        ocr_calls = []
+        original_ocr = sensitive_mod.extract_text_from_image
+
+        def mocked_ocr(path, max_dim=1600):
+            ocr_calls.append(str(path))
+            return "Sensitive PAN: ABCDE1234F"
+
+        sensitive_mod.extract_text_from_image = mocked_ocr
+
+        try:
+            flagged = scan_sensitive(db_path=test_db, show_progress=False)
+            assert flagged == 0, f"Expected 0 files flagged, got {flagged}"
+            assert len(ocr_calls) == 0, (
+                f"OCR should have been skipped, but was called {len(ocr_calls)} times!"
+            )
+        finally:
+            sensitive_mod.extract_text_from_image = original_ocr
+
+        del r1, r2
+        gc.collect()
+
+    print(" Intelligent OCR Category Gating verified successfully (0 OCR calls on photos)!")
+
+
 if __name__ == "__main__":
     test_checksum_algorithms()
     test_pattern_detection_and_masking()
     test_end_to_end_privacy_scan()
+    test_ocr_category_gating()

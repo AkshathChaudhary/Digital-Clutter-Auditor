@@ -9,6 +9,7 @@ Provides:
 Owned by Person B (Intelligence & Dashboard).
 """
 
+import logging
 import os
 from pathlib import Path
 import sys
@@ -23,6 +24,8 @@ for p in (PROJECT_ROOT, APP_DIR):
 
 # Must import ssl_fix before any networking / ML imports
 import ssl_fix
+
+logger = logging.getLogger("clutteriq.app")
 
 import streamlit as st
 
@@ -79,27 +82,27 @@ st.set_page_config(
 
 
 def run_pipeline_analysis(progress_bar, status_text) -> None:
-    """Execute Person B intelligence pipeline end-to-end with visual feedback."""
-    status_text.text("1/4: Generating CLIP image embeddings...")
-    progress_bar.progress(0.25)
-    from dedup.semantic import cluster_semantic, compute_embeddings
-    compute_embeddings(db_path=DB_PATH, show_progress=False)
+    """Execute intelligence pipeline end-to-end with step-by-step telemetry."""
+    import time
 
-    status_text.text("2/4: Clustering semantic duplicates...")
-    progress_bar.progress(0.50)
-    cluster_semantic(db_path=DB_PATH)
+    steps = [
+        ("Generating CLIP ViT-B-32 Image Embeddings", lambda: __import__("dedup.semantic", fromlist=["compute_embeddings"]).compute_embeddings(db_path=DB_PATH, show_progress=False)),
+        ("Clustering Semantic Duplicates (HNSW Graph)", lambda: __import__("dedup.semantic", fromlist=["cluster_semantic"]).cluster_semantic(db_path=DB_PATH)),
+        ("Scanning Sensitive Documents (OCR, PDF, Luhn & Verhoeff)", lambda: __import__("privacy.sensitive", fromlist=["scan_sensitive"]).scan_sensitive(db_path=DB_PATH, show_progress=False)),
+        ("Predicting ML Junk & Staleness Scores", lambda: __import__("ml.junk_model", fromlist=["predict_scores"]).predict_scores(db_path=DB_PATH)),
+    ]
 
-    status_text.text("3/4: Scanning files for sensitive identifiers (Aadhaar, PAN, Cards)...")
-    progress_bar.progress(0.75)
-    from privacy.sensitive import scan_sensitive
-    scan_sensitive(db_path=DB_PATH, show_progress=False)
+    total_steps = len(steps)
+    for idx, (title, action) in enumerate(steps):
+        t0 = time.time()
+        status_text.info(f"⏳ Step {idx + 1}/{total_steps}: {title}...")
+        progress_bar.progress((idx) / total_steps)
+        action()
+        elapsed = time.time() - t0
+        logger.info(f"Completed '{title}' in {elapsed:.2f}s")
 
-    status_text.text("4/4: Computing ML junk & staleness probabilities...")
     progress_bar.progress(1.0)
-    from ml.junk_model import predict_scores
-    predict_scores(db_path=DB_PATH)
-
-    status_text.text("Analysis complete!")
+    status_text.success("🎉 Full Analysis Pipeline Completed Successfully!")
 
 
 def main():
