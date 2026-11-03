@@ -57,20 +57,29 @@ def render_duplicates_page(db_path: Path | str = DB_PATH) -> None:
       AND (exact_group IS NOT NULL OR near_group IS NOT NULL OR semantic_group IS NOT NULL)
     ORDER BY id ASC
     """
+    db.resolve_lone_duplicates(db_path=db_path)
     df = db.fetch_df(query, db_path=db_path)
 
     if df.empty:
         st.info("ℹ️ No duplicate groups found yet. Run **'Run Analysis'** from the sidebar to detect duplicate files.")
         return
 
-    # Counts
+    # Filter strictly to duplicate groups with > 1 active files
     exact_df = df[df["exact_group"].notna()]
     near_df = df[df["near_group"].notna()]
     semantic_df = df[df["semantic_group"].notna()]
 
-    num_exact_groups = exact_df["exact_group"].nunique()
-    num_near_groups = near_df["near_group"].nunique()
-    num_semantic_groups = semantic_df["semantic_group"].nunique()
+    valid_exact = set(exact_df["exact_group"].value_counts()[lambda c: c > 1].index)
+    valid_near = set(near_df["near_group"].value_counts()[lambda c: c > 1].index)
+    valid_sem = set(semantic_df["semantic_group"].value_counts()[lambda c: c > 1].index)
+
+    exact_df = exact_df[exact_df["exact_group"].isin(valid_exact)]
+    near_df = near_df[near_df["near_group"].isin(valid_near)]
+    semantic_df = semantic_df[semantic_df["semantic_group"].isin(valid_sem)]
+
+    num_exact_groups = len(valid_exact)
+    num_near_groups = len(valid_near)
+    num_semantic_groups = len(valid_sem)
 
     # Recoverable duplicate space (sum of non-keepers)
     dup_non_keepers = df[df["is_keeper"] == 0]
@@ -118,6 +127,9 @@ def _render_exact_section(df: pd.DataFrame, db_path: Path | str) -> None:
         return
 
     group_ids = sorted(df["exact_group"].dropna().unique())
+    if not group_ids:
+        st.success("🎉 All exact duplicates have been neutralized and quarantined!")
+        return
 
     for gid in group_ids:
         group_files = df[df["exact_group"] == gid].sort_values(by="is_keeper", ascending=False)
@@ -217,6 +229,16 @@ def _render_exact_section(df: pd.DataFrame, db_path: Path | str) -> None:
                     st.caption(f"📁 `{file_path.name}`")
 
                     if not is_keeper:
+                        if st.button("Move to Quarantine", key=f"q_sem_{row['id']}", use_container_width=True):
+                            try:
+                                quarantine_file(int(row["id"]), db_path=db_path)
+                                db.resolve_lone_duplicates(db_path=db_path)
+                                st.success("Quarantined!")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Failed: {ex}")
+
+                    if not is_keeper:
                         if st.button("Move to Quarantine", key=f"q_exact_{row['id']}", use_container_width=True):
                             try:
                                 quarantine_file(int(row["id"]), db_path=db_path)
@@ -240,6 +262,9 @@ def _render_near_section(df: pd.DataFrame, db_path: Path | str) -> None:
         return
 
     group_ids = sorted(df["near_group"].dropna().unique())
+    if not group_ids:
+        st.success("🎉 All near-duplicate images have been neutralized and quarantined!")
+        return
 
     for gid in group_ids:
         group_files = df[df["near_group"] == gid].sort_values(by="is_keeper", ascending=False)
@@ -325,6 +350,16 @@ def _render_near_section(df: pd.DataFrame, db_path: Path | str) -> None:
                     st.caption(f"📁 `{file_path.name}`")
 
                     if not is_keeper:
+                        if st.button("Move to Quarantine", key=f"q_sem_{row['id']}", use_container_width=True):
+                            try:
+                                quarantine_file(int(row["id"]), db_path=db_path)
+                                db.resolve_lone_duplicates(db_path=db_path)
+                                st.success("Quarantined!")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Failed: {ex}")
+
+                    if not is_keeper:
                         if st.button("Move to Quarantine", key=f"q_near_{row['id']}", use_container_width=True):
                             try:
                                 quarantine_file(int(row["id"]), db_path=db_path)
@@ -386,3 +421,13 @@ def _render_semantic_section(df: pd.DataFrame, db_path: Path | str) -> None:
                         except Exception:
                             pass
                     st.caption(f"📁 `{file_path.name}`")
+
+                    if not is_keeper:
+                        if st.button("Move to Quarantine", key=f"q_sem_{row['id']}", use_container_width=True):
+                            try:
+                                quarantine_file(int(row["id"]), db_path=db_path)
+                                db.resolve_lone_duplicates(db_path=db_path)
+                                st.success("Quarantined!")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Failed: {ex}")

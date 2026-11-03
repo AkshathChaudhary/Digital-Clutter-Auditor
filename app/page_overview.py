@@ -106,14 +106,12 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
     # Instant sub-millisecond KPI retrieval from SQLite C-engine
     total_files, total_bytes, recoverable_bytes, total_groups, privacy_alerts = db.get_overview_kpis(db_path=db_path)
 
-    # Breakdown counts
-    exact_count = int(df["exact_group"].dropna().nunique()) if "exact_group" in df else 0
-    near_count = int(df["near_group"].dropna().nunique()) if "near_group" in df else 0
-    semantic_count = int(df["semantic_group"].dropna().nunique()) if "semantic_group" in df else 0
-
-    # Telemetry on quarantine vault and permanently purged items
+    # Breakdown counts (strictly duplicate groups with > 1 active files)
     conn = db.get_conn(db_path)
     try:
+        exact_count = conn.execute("SELECT COUNT(*) FROM (SELECT exact_group FROM files WHERE status = 'active' AND exact_group IS NOT NULL GROUP BY exact_group HAVING COUNT(*) > 1)").fetchone()[0]
+        near_count = conn.execute("SELECT COUNT(*) FROM (SELECT near_group FROM files WHERE status = 'active' AND near_group IS NOT NULL GROUP BY near_group HAVING COUNT(*) > 1)").fetchone()[0]
+        semantic_count = conn.execute("SELECT COUNT(*) FROM (SELECT semantic_group FROM files WHERE status = 'active' AND semantic_group IS NOT NULL GROUP BY semantic_group HAVING COUNT(*) > 1)").fetchone()[0]
         quarantined_count = conn.execute("SELECT COUNT(*) FROM files WHERE status = 'quarantined'").fetchone()[0]
         quarantined_bytes = conn.execute("SELECT COALESCE(SUM(size), 0) FROM files WHERE status = 'quarantined'").fetchone()[0]
         deleted_count = conn.execute("SELECT COUNT(*) FROM files WHERE status = 'deleted'").fetchone()[0]
@@ -132,7 +130,7 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
     hygiene_score = max(15, hygiene_score)
 
     # When all threats and duplicates are moved to vault or deleted, score is pristine
-    if total_groups == 0 and privacy_alerts == 0 and recoverable_bytes < 1024:
+    if total_groups == 0 and privacy_alerts == 0:
         hygiene_score = 100
         grade_letter, grade_color, grade_desc = "A+", "#10B981", "Pristine Digital Hygiene — All Clutter & Risks Neutralized"
     elif hygiene_score >= 88:

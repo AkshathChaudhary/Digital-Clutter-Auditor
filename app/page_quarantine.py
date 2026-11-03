@@ -57,6 +57,8 @@ def render_quarantine_page(db_path: Path | str = DB_PATH) -> None:
         "or **permanently purged** from your physical disk."
     )
 
+    db.resolve_lone_duplicates(db_path=db_path)
+
     # 1. Fetch active quarantine records
     query = """
     SELECT q.id AS q_id, q.file_id, q.original_path, q.quarantine_path,
@@ -115,10 +117,11 @@ def render_quarantine_page(db_path: Path | str = DB_PATH) -> None:
         )
     with batch_col2:
         with st.expander("💥 Bulk Sanitization (Empty Entire Vault)", expanded=False):
-            st.warning("⚠️ This will permanently and irreversibly delete all files currently in the Quarantine Vault from your hard drive.")
-            confirm_empty = st.checkbox(f"Confirm permanent deletion of all {len(df)} files", key="confirm_bulk_purge")
-            if st.button("🚨 Permanently Delete All Files in Vault", type="primary", disabled=not confirm_empty, use_container_width=True):
+            st.warning("⚠️ DANGER: This will permanently purge EVERY file currently in the Quarantine Vault at once. To delete only 1 specific file, use the individual 'Delete Permanently' button inside that file's box below.")
+            confirm_empty = st.checkbox(f"I understand: Purge ALL {len(df)} files from vault simultaneously", key="confirm_bulk_purge")
+            if st.button("🚨 Purge All Vault Files", type="primary", disabled=not confirm_empty, use_container_width=True):
                 purged_count, freed_bytes = permanently_delete_all(db_path=db_path)
+                db.resolve_lone_duplicates(db_path=db_path)
                 st.success(f"💥 Successfully purged {purged_count} files! Reclaimed {format_bytes(freed_bytes)} permanently from disk.")
                 st.rerun()
 
@@ -164,17 +167,20 @@ def render_quarantine_page(db_path: Path | str = DB_PATH) -> None:
                     except Exception as ex:
                         st.error(f"Restoration failed: {ex}")
 
-                # 2. Permanent Delete Action
+                # 2. Permanent Delete Action (Individual file only)
+                confirm_single = st.checkbox("Confirm delete this file", key=f"conf_del_{qid}")
                 if st.button(
-                    "🗑️ Delete Permanently",
+                    "🗑️ Delete Permanently (This File Only)",
                     key=f"perm_del_{qid}",
                     type="primary",
-                    help="Permanently unlinks the file from your computer and frees disk storage",
+                    disabled=not confirm_single,
+                    help="Permanently unlinks only this specific file from your computer",
                     use_container_width=True,
                 ):
                     try:
                         ok, deleted_name, freed = permanently_delete_file(qid, db_path=db_path)
-                        st.success(f"💥 Permanently deleted `{deleted_name}`! Freed {format_bytes(freed)} from disk.")
+                        db.resolve_lone_duplicates(db_path=db_path)
+                        st.success(f"💥 Permanently deleted only `{deleted_name}`! Freed {format_bytes(freed)} from disk.")
                         st.rerun()
                     except Exception as ex:
                         st.error(f"Deletion failed: {ex}")

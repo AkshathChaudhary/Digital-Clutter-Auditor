@@ -60,7 +60,23 @@ def quarantine_file(file_id: int, db_path: Path = DB_PATH) -> Path:
         status="quarantined",
     )
 
+    db.resolve_lone_duplicates(db_path=db_path)
+
     return destination
+
+
+
+def quarantine_files(file_ids: list[int], db_path: Path = DB_PATH) -> int:
+    """Move multiple files into quarantine in batch."""
+    count = 0
+    for fid in file_ids:
+        try:
+            quarantine_file(fid, db_path=db_path)
+            count += 1
+        except Exception:
+            continue
+    db.resolve_lone_duplicates(db_path=db_path)
+    return count
 
 def restore_file(
     quarantine_id: int,
@@ -120,6 +136,7 @@ def restore_file(
             restored_at=time.time(),
             db_path=db_path,
         )
+        db.resolve_lone_duplicates(db_path=db_path)
 
     except Exception:
         # Compensate if the database update fails.
@@ -154,19 +171,16 @@ def permanently_delete_file(
     freed_bytes = file_rec.size if file_rec else 0
     filename = file_rec.name if file_rec else original_path.name
 
-    # 1. Unlink from quarantine vault on disk
+    # 1. Unlink ONLY the quarantined file in the vault
     if quarantine_path.is_file() or quarantine_path.exists():
         quarantine_path.unlink()
 
-    # 2. Also ensure original path does not have an orphan copy
-    if original_path.is_file() or original_path.exists():
-        try:
-            original_path.unlink()
-        except Exception:
-            pass
-
-    # 3. Clean record from database
+    # 2. Mark this record and file as deleted
     db.mark_quarantine_deleted(quarantine_id, record["file_id"], db_path=db_path)
+
+    # 3. Automatically resolve duplicate groups and refresh health stats
+    db.resolve_lone_duplicates(db_path=db_path)
+
     return True, filename, freed_bytes
 
 

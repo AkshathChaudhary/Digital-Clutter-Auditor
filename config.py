@@ -8,7 +8,6 @@ import os
 import stat
 from pathlib import Path
 
-QUARANTINE_DIR = Path("data/quarantine")
 
 # ---------------------------------------------------------------------------
 # Paths (all relative to project root; created at runtime if missing)

@@ -395,9 +395,71 @@ def record_scan_run(
     finally:
         conn.close()
 
+def resolve_lone_duplicates(db_path: Path | str = DB_PATH) -> None:
+    """Clear duplicate group tags for any groups that now have <= 1 active file remaining.
+    
+    Ensures that when duplicate copies are quarantined or permanently deleted,
+    the solitary remaining keeper is no longer marked as duplicate, resolving the group.
+    """
+    conn = get_conn(db_path)
+    try:
+        with conn:
+            # 1. Exact duplicates: if <= 1 active files remain, clear group and keeper status
+            conn.execute("""
+                UPDATE files SET exact_group = NULL, is_keeper = 0
+                WHERE exact_group IN (
+                    SELECT exact_group FROM files 
+                    WHERE status = 'active' AND exact_group IS NOT NULL 
+                    GROUP BY exact_group HAVING COUNT(*) <= 1
+                ) AND status = 'active'
+            """)
+
+            # 2. Near duplicates: if <= 1 active files remain, clear group and keeper status
+            conn.execute("""
+                UPDATE files SET near_group = NULL, is_keeper = 0
+                WHERE near_group IN (
+                    SELECT near_group FROM files 
+                    WHERE status = 'active' AND near_group IS NOT NULL 
+                    GROUP BY near_group HAVING COUNT(*) <= 1
+                ) AND status = 'active'
+            """)
+
+            # 3. Semantic clusters: if <= 1 active files remain, clear group and keeper status
+            conn.execute("""
+                UPDATE files SET semantic_group = NULL, is_keeper = 0
+                WHERE semantic_group IN (
+                    SELECT semantic_group FROM files 
+                    WHERE status = 'active' AND semantic_group IS NOT NULL 
+                    GROUP BY semantic_group HAVING COUNT(*) <= 1
+                ) AND status = 'active'
+            """)
+
+            # 4. If an active group still has > 1 active files, ensure at least one keeper is designated
+            for group_col in ('exact_group', 'near_group', 'semantic_group'):
+                rows = conn.execute(f"""
+                    SELECT {group_col}, id, is_keeper FROM files
+                    WHERE status = 'active' AND {group_col} IS NOT NULL
+                    ORDER BY {group_col}, is_keeper DESC, id ASC
+                """).fetchall()
+                seen = set()
+                with_keeper = set()
+                for gid, fid, is_k in rows:
+                    seen.add(gid)
+                    if is_k == 1:
+                        with_keeper.add(gid)
+                for gid in seen - with_keeper:
+                    conn.execute(f"""
+                        UPDATE files SET is_keeper = 1 
+                        WHERE id = (SELECT id FROM files WHERE status = 'active' AND {group_col} = ? ORDER BY id ASC LIMIT 1)
+                    """, (gid,))
+    finally:
+        conn.close()
+
+
 # pyrefly: ignore[unknown-name]
 def get_overview_kpis(db_path: Path | str = DB_PATH) -> Tuple[int, float, float, int, int]:
     """Compute executive KPI metrics directly inside SQLite in < 5ms."""
+    resolve_lone_duplicates(db_path)
     sql = """
     SELECT 
         COUNT(*) AS total_files,
