@@ -180,6 +180,7 @@ def build_feature_table(
         "file_id": df["id"].astype(int),
         "path": paths,
         "name": names,
+        "size_bytes": size_bytes,
 
         # Engineered features
         "age_days": age_days,

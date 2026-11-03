@@ -166,14 +166,13 @@ def choose_keepers(db_path: Path = DB_PATH) -> dict:
     db.init_db(db_path)
 
     # Clear previous keeper decisions for active images.
-    all_images = db.files_by_kind("image", db_path=db_path)
-
-    for record in all_images:
-        db.update_columns(
-            record.id,
-            db_path=db_path,
-            is_keeper=0
-        )
+    # Clear previous keeper decisions for all active files.
+    conn = db.get_conn(db_path)
+    try:
+        with conn:
+            conn.execute("UPDATE files SET is_keeper = 0 WHERE status = 'active'")
+    finally:
+        conn.close()
 
     # Calculate fresh metrics.
     valid_records = update_image_metrics(db_path)
@@ -195,5 +194,32 @@ def choose_keepers(db_path: Path = DB_PATH) -> dict:
         selected[keeper.id] = [
             record.path for record in cluster
         ]
+
+    # Also select keepers for non-image duplicate groups (PDFs, documents, executables)
+    non_image_records = db.fetch_df(
+        "SELECT id, path, name, exact_group, modified FROM files WHERE exact_group IS NOT NULL AND status = 'active'",
+        db_path=db_path,
+    )
+    if not non_image_records.empty:
+        for group_id, group_df in non_image_records.groupby("exact_group"):
+            # Check if this group already has a keeper assigned
+            records_in_group = group_df.to_dict("records")
+            existing_keepers = db.fetch_df(
+                "SELECT id FROM files WHERE exact_group = ? AND is_keeper = 1",
+                params=(int(group_id),),
+                db_path=db_path,
+            )
+            if not existing_keepers.empty:
+                continue
+
+            def non_image_rank(row):
+                has_copy = 1 if any(pat in row["name"].lower() for pat in ["copy", "(1)", "(2)", "- copy"]) else 0
+                return (has_copy, float(row["modified"] or 0), len(row["name"]))
+
+            sorted_group = sorted(records_in_group, key=non_image_rank)
+            winner = sorted_group[0]
+            winner_id = int(winner["id"])
+            db.update_columns(winner_id, db_path=db_path, is_keeper=1)
+            selected[winner_id] = [r["path"] for r in sorted_group]
 
     return selected

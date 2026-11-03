@@ -15,6 +15,7 @@ Owned by Person B (Intelligence & Dashboard).
 """
 
 from pathlib import Path
+import textwrap
 import time
 from typing import Tuple
 
@@ -64,11 +65,18 @@ def compute_overview_metrics(df: pd.DataFrame) -> Tuple[int, float, float, int, 
     recoverable_mask = is_dup_non_keeper | is_high_junk
     recoverable_bytes = float(df.loc[recoverable_mask, "size"].sum())
 
-    # Count unique duplicate clusters across all methods
-    exact_groups = set(df["exact_group"].dropna().unique())
-    near_groups = set(df["near_group"].dropna().unique())
-    semantic_groups = set(df["semantic_group"].dropna().unique())
-    total_dup_groups = len(exact_groups) + len(near_groups) + len(semantic_groups)
+    # Count unique unresolved duplicate clusters across all methods (groups with > 1 active file)
+    def count_active_groups(col: str) -> int:
+        if col not in df or df[col].dropna().empty:
+            return 0
+        counts = df[col].dropna().value_counts()
+        return int((counts > 1).sum())
+
+    total_dup_groups = (
+        count_active_groups("exact_group")
+        + count_active_groups("near_group")
+        + count_active_groups("semantic_group")
+    )
 
     # Privacy risk alerts
     privacy_alerts = int(df["privacy_type"].notna().sum())
@@ -98,6 +106,98 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
     # Instant sub-millisecond KPI retrieval from SQLite C-engine
     total_files, total_bytes, recoverable_bytes, total_groups, privacy_alerts = db.get_overview_kpis(db_path=db_path)
 
+    # Breakdown counts
+    exact_count = int(df["exact_group"].dropna().nunique()) if "exact_group" in df else 0
+    near_count = int(df["near_group"].dropna().nunique()) if "near_group" in df else 0
+    semantic_count = int(df["semantic_group"].dropna().nunique()) if "semantic_group" in df else 0
+
+    # Telemetry on quarantine vault and permanently purged items
+    conn = db.get_conn(db_path)
+    try:
+        quarantined_count = conn.execute("SELECT COUNT(*) FROM files WHERE status = 'quarantined'").fetchone()[0]
+        quarantined_bytes = conn.execute("SELECT COALESCE(SUM(size), 0) FROM files WHERE status = 'quarantined'").fetchone()[0]
+        deleted_count = conn.execute("SELECT COUNT(*) FROM files WHERE status = 'deleted'").fetchone()[0]
+        deleted_bytes = conn.execute("SELECT COALESCE(SUM(size), 0) FROM files WHERE status = 'deleted'").fetchone()[0]
+    finally:
+        conn.close()
+
+    # Dynamic Digital Hygiene Score (Directly reflects current active risks vs resolved actions)
+    hygiene_score = 100
+    if total_groups > 0:
+        hygiene_score -= min(40, total_groups * 10)
+    if privacy_alerts > 0:
+        hygiene_score -= min(40, privacy_alerts * 25)
+    if recoverable_bytes > (50 * 1024):
+        hygiene_score -= 10
+    hygiene_score = max(15, hygiene_score)
+
+    # When all threats and duplicates are moved to vault or deleted, score is pristine
+    if total_groups == 0 and privacy_alerts == 0 and recoverable_bytes < 1024:
+        hygiene_score = 100
+        grade_letter, grade_color, grade_desc = "A+", "#10B981", "Pristine Digital Hygiene — All Clutter & Risks Neutralized"
+    elif hygiene_score >= 88:
+        grade_letter, grade_color, grade_desc = "A", "#10B981", "Optimal System Hygiene — Minimal Clutter"
+    elif hygiene_score >= 75:
+        grade_letter, grade_color, grade_desc = "B+", "#38BDF8", "Good Hygiene — Actionable Duplicate Clutter Found"
+    elif hygiene_score >= 60:
+        grade_letter, grade_color, grade_desc = "C", "#F59E0B", "Attention Required — Redundant Data & Sensitive PII Exposed"
+    else:
+        grade_letter, grade_color, grade_desc = "D", "#EF4444", "High Clutter & Critical Unprotected Privacy Risks"
+
+    # Executive Hygiene Dashboard Hero Banner
+    cleaned_badge = ""
+    if quarantined_count > 0 or deleted_count > 0:
+        purge_part = f'<span style="background: rgba(139, 92, 246, 0.2); color: #C084FC; border: 1px solid rgba(139, 92, 246, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 600;">💥 {deleted_count} permanently purged ({format_bytes(deleted_bytes)} freed)</span>' if deleted_count > 0 else ''
+        cleaned_badge = (
+            f'<div style="margin-top: 10px; display: inline-flex; gap: 8px; flex-wrap: wrap;">'
+            f'<span style="background: rgba(16, 185, 129, 0.2); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 600;">'
+            f'🛡️ {quarantined_count} files isolated in vault ({format_bytes(quarantined_bytes)})'
+            f'</span>'
+            f'{purge_part}'
+            f'</div>'
+        )
+
+    security_status_text = '🔒 100% Privacy Secure' if privacy_alerts == 0 else f'⚠️ {privacy_alerts} Exposed Identity Risk(s)'
+    security_status_color = '#10B981' if privacy_alerts == 0 else '#F43F5E'
+
+    hero_html = (
+        f'<div style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.9) 100%); '
+        f'border: 1px solid rgba(255, 255, 255, 0.08); border-left: 6px solid {grade_color}; border-radius: 14px; '
+        f'padding: 22px 26px; margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);">'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">'
+        f'<div>'
+        f'<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">'
+        f'<span style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; color: #94A3B8; font-weight: 700;">Digital Hygiene Audit</span>'
+        f'<span style="background: {grade_color}22; color: {grade_color}; border: 1px solid {grade_color}66; padding: 2px 8px; border-radius: 9999px; font-size: 0.75rem; font-weight: 700;">'
+        f'Grade {grade_letter}'
+        f'</span>'
+        f'</div>'
+        f'<h2 style="margin: 0 0 6px 0; color: #F8FAFC; font-size: 1.85rem; font-weight: 800; letter-spacing: -0.02em;">'
+        f'System Hygiene Score: <span style="color: {grade_color};">{hygiene_score}/100</span>'
+        f'</h2>'
+        f'<p style="margin: 0; color: #CBD5E1; font-size: 0.95rem;">'
+        f'{grade_desc} • <strong>{format_bytes(recoverable_bytes)}</strong> recoverable across <strong>{total_groups}</strong> active duplicate groups'
+        f'</p>'
+        f'{cleaned_badge}'
+        f'</div>'
+        f'<div style="text-align: right; margin-top: 10px;">'
+        f'<div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); padding: 12px 18px; border-radius: 10px; display: inline-block;">'
+        f'<div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Security Status</div>'
+        f'<div style="font-weight: 700; font-size: 1.05rem; color: {security_status_color};">{security_status_text}</div>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+        f'<!-- Progress indicator bar -->'
+        f'<div style="width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08); border-radius: 9999px; margin-top: 18px; overflow: hidden;">'
+        f'<div style="width: {hygiene_score}%; height: 100%; background: linear-gradient(90deg, {grade_color}aa, {grade_color}); border-radius: 9999px; transition: width 0.5s ease;"></div>'
+        f'</div>'
+        f'</div>'
+    )
+    if hasattr(st, "html"):
+        st.html(hero_html)
+    else:
+        st.markdown(hero_html, unsafe_allow_html=True)
+
     # Top KPI Metric Cards
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
@@ -112,7 +212,12 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
             delta_color="normal",
         )
     with col4:
-        st.metric("Duplicate Clusters", f"{total_groups:,}")
+        st.metric(
+            "Duplicate Clusters",
+            f"{total_groups:,}",
+            delta=f"{exact_count} Exact | {near_count} Near | {semantic_count} CLIP",
+            delta_color="off",
+        )
     with col5:
         st.metric(
             "Privacy Risks",
@@ -143,7 +248,7 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
             color="size_mb",
             color_continuous_scale="Teal",
         )
-        fig_treemap.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+        fig_treemap.update_layout(template="plotly_dark", margin=dict(t=30, l=10, r=10, b=10))
         st.plotly_chart(fig_treemap, use_container_width=True)
 
     with row1_right:
@@ -165,8 +270,9 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
             color="kind",
             title="Total Size by File Kind (MB)",
             labels={"kind": "Category", "size_mb": "MB"},
+            color_discrete_sequence=px.colors.qualitative.Prism,
         )
-        fig_bar.update_layout(showlegend=False, margin=dict(t=30, l=10, r=10, b=10))
+        fig_bar.update_layout(template="plotly_dark", showlegend=False, margin=dict(t=30, l=10, r=10, b=10))
         st.plotly_chart(fig_bar, use_container_width=True)
 
     st.divider()
@@ -182,15 +288,15 @@ def render_overview_page(db_path: Path | str = DB_PATH) -> None:
         nbins=40,
         title="File Age Distribution (Days since Last Modification)",
         labels={"age_days": "Age (Days)"},
-        color_discrete_sequence=["#4F46E5"],
+        color_discrete_sequence=["#818CF8"],
     )
     fig_hist.add_vline(
         x=365,
         line_dash="dash",
-        line_color="red",
+        line_color="#EF4444",
         annotation_text="Stale Threshold (365 days)",
         annotation_position="top right",
     )
-    fig_hist.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+    fig_hist.update_layout(template="plotly_dark", margin=dict(t=30, l=10, r=10, b=10))
     st.plotly_chart(fig_hist, use_container_width=True)
 

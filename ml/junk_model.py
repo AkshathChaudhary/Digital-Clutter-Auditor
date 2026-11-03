@@ -48,38 +48,43 @@ def heuristic_score(row: pd.Series | Dict[str, Any]) -> Tuple[float, str]:
     score = 0.0
     reasons: List[str] = []
 
-    # 1. Non-keeper duplicate check
-    in_dup = bool(
-        row.get("in_exact_group", 0)
-        or row.get("in_near_group", 0)
-        or row.get("in_semantic_group", 0)
-    )
+    # 1. Non-keeper duplicate check - classify exact duplicate type
     is_keeper = bool(row.get("is_keeper", 0))
+    if not is_keeper:
+        if bool(row.get("in_exact_group", 0)):
+            score += 0.35
+            reasons.append("Exact match non-keeper copy (SHA-256 duplicate)")
+        elif bool(row.get("in_near_group", 0)):
+            score += 0.30
+            reasons.append("Near-duplicate non-keeper copy (pHash visual match)")
+        elif bool(row.get("in_semantic_group", 0)):
+            score += 0.25
+            reasons.append("Semantic non-keeper copy (CLIP AI cluster)")
 
-    if in_dup and not is_keeper:
-        score += 0.30
-        reasons.append("duplicate non-keeper copy")
+    # 2. Check for empty 0-byte file vs tiny file
+    size_val = row.get("size_bytes", None)
+    if size_val is not None and float(size_val) == 0.0:
+        score += 0.40
+        reasons.append("empty zero-byte file (0 B)")
+    elif int(row.get("tiny_file", 0)) == 1:
+        score += 0.05
+        reasons.append("tiny file (< 10 KB)")
 
-    # 2. Staleness check
+    # 3. Staleness check
     age = float(row.get("age_days", 0.0))
     if age > STALE_DAYS:
         score += 0.20
         reasons.append(f"unmodified for {int(age)} days")
 
-    # 3. Blur / quality check
+    # 4. Blur / quality check
     if int(row.get("is_blurry", 0)) == 1:
         score += 0.15
         reasons.append("low sharpness / blurry")
 
-    # 4. Copy naming check
+    # 5. Copy naming check
     if int(row.get("name_copy_pattern", 0)) == 1:
         score += 0.15
         reasons.append("copy/draft filename convention")
-
-    # 5. Tiny file check
-    if int(row.get("tiny_file", 0)) == 1:
-        score += 0.10
-        reasons.append("tiny file (< 10 KB)")
 
     # 6. Temporary folder check
     if int(row.get("in_downloads_or_temp", 0)) == 1:
@@ -111,8 +116,15 @@ def explain_ml_prediction(
         val = row.get(feat, 0)
         if feat == "age_days" and val > STALE_DAYS:
             contributions.append((imp * 1.5, f"unmodified for {int(val)} days"))
-        elif feat == "is_keeper" and val == 0 and (row.get("in_exact_group", 0) or row.get("in_near_group", 0)):
-            contributions.append((imp * 2.0, "duplicate non-keeper"))
+        elif feat == "is_keeper" and val == 0:
+            if row.get("in_exact_group", 0):
+                contributions.append((imp * 2.5, "exact byte-for-byte duplicate (SHA-256)"))
+            elif row.get("in_near_group", 0):
+                contributions.append((imp * 2.0, "near-duplicate visual match (pHash)"))
+            elif row.get("in_semantic_group", 0):
+                contributions.append((imp * 1.5, "semantic AI cluster (CLIP)"))
+            else:
+                contributions.append((imp * 1.5, "duplicate copy"))
         elif feat == "name_copy_pattern" and val == 1:
             contributions.append((imp * 1.2, "copy filename pattern"))
         elif feat == "in_downloads_or_temp" and val == 1:

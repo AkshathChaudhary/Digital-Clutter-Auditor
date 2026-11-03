@@ -42,7 +42,7 @@ def test_heuristic_scoring():
     }
     score, reason = heuristic_score(junk_row)
     assert score == 1.0, f"Expected capped score 1.0, got {score}"
-    assert "duplicate non-keeper copy" in reason
+    assert "non-keeper copy" in reason
     assert "unmodified for 400 days" in reason
     assert "blurry" in reason
 

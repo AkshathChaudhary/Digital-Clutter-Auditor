@@ -360,6 +360,21 @@ def mark_quarantine_restored(
 
     finally:
         conn.close()
+def mark_quarantine_deleted(
+    quarantine_id: int,
+    file_id: int,
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Mark a quarantine record and its file as permanently deleted."""
+    conn = get_conn(db_path)
+    try:
+        with conn:
+            conn.execute("DELETE FROM quarantine_log WHERE id = ?", (quarantine_id,))
+            conn.execute("UPDATE files SET status = 'deleted' WHERE id = ?", (file_id,))
+    finally:
+        conn.close()
+
+
 def record_scan_run(
     root: str,
     started: float,
@@ -391,10 +406,12 @@ def get_overview_kpis(db_path: Path | str = DB_PATH) -> Tuple[int, float, float,
             WHEN (exact_group IS NOT NULL OR near_group IS NOT NULL OR semantic_group IS NOT NULL) AND is_keeper = 0 THEN size
             WHEN junk_score >= 0.8 THEN size 
             ELSE 0 END), 0) AS recoverable_bytes,
-        COUNT(DISTINCT exact_group) + COUNT(DISTINCT near_group) + COUNT(DISTINCT semantic_group) AS total_dup_groups,
+        (SELECT COUNT(*) FROM (SELECT exact_group FROM files WHERE status IN ('active', 'restored') AND exact_group IS NOT NULL GROUP BY exact_group HAVING COUNT(*) > 1))
+        + (SELECT COUNT(*) FROM (SELECT near_group FROM files WHERE status IN ('active', 'restored') AND near_group IS NOT NULL GROUP BY near_group HAVING COUNT(*) > 1))
+        + (SELECT COUNT(*) FROM (SELECT semantic_group FROM files WHERE status IN ('active', 'restored') AND semantic_group IS NOT NULL GROUP BY semantic_group HAVING COUNT(*) > 1)) AS total_dup_groups,
         COUNT(privacy_type) AS privacy_alerts
     FROM files 
-    WHERE status = 'active';
+    WHERE status IN ('active', 'restored');
     """
     conn = get_conn(db_path)
     try:

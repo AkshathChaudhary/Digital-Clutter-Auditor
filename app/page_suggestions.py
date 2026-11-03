@@ -10,6 +10,7 @@ Owned by Person B (Intelligence & Dashboard).
 """
 
 from pathlib import Path
+import pandas as pd
 import streamlit as st
 
 from config import DB_PATH, MODEL_PATH
@@ -32,7 +33,8 @@ def render_suggestions_page(db_path: Path | str = DB_PATH) -> None:
 
     # 1. Fetch active records with scores
     query = """
-    SELECT id, name, path, kind, size, junk_score, junk_reason, user_label
+    SELECT id, name, path, kind, size, exact_group, near_group, semantic_group,
+           is_keeper, junk_score, junk_reason, user_label
     FROM files
     WHERE status = 'active' AND junk_score IS NOT NULL
     ORDER BY junk_score DESC, size DESC
@@ -40,7 +42,7 @@ def render_suggestions_page(db_path: Path | str = DB_PATH) -> None:
     df = db.fetch_df(query, db_path=db_path)
 
     if df.empty:
-        st.info(" No files scored yet. Click **'Run Analysis'** in the sidebar to score active files using the ML/heuristic engine.")
+        st.info("ℹ️ No files scored yet. Click **'Run Analysis'** in the sidebar to score active files using the ML/heuristic engine.")
         return
 
     # Count labelled files
@@ -56,12 +58,12 @@ def render_suggestions_page(db_path: Path | str = DB_PATH) -> None:
             text=f"Active Learning Progress: {labelled_count}/{min_required} labelled files for Random Forest",
         )
     with status_col2:
-        if st.button(" Retrain Machine Learning Model", type="primary"):
+        if st.button("🔄 Retrain Machine Learning Model", type="primary"):
             with st.spinner("Training Random Forest with 5-fold cross-validation..."):
                 metrics, rescored_count = retrain(db_path=db_path, min_samples=min_required)
                 if metrics is not None:
                     st.success(
-                        f" Model successfully updated and serialized! "
+                        f"🎉 Model successfully updated and serialized! "
                         f"Accuracy: **{metrics['accuracy']:.1%}** | "
                         f"F1-Score: **{metrics['f1']:.1%}** | "
                         f"Trained on {metrics['n_samples']} samples."
@@ -79,9 +81,9 @@ def render_suggestions_page(db_path: Path | str = DB_PATH) -> None:
     # 3. Quick Action: Batch Quarantine High-Confidence Junk
     high_junk_df = df[(df["junk_score"] >= 0.85) & (df["user_label"] != "keep")]
     if not high_junk_df.empty:
-        st.subheader(" High-Confidence Recommendations")
+        st.subheader("⚡ High-Confidence Recommendations")
         st.caption(f"{len(high_junk_df)} files have junk probability $\\ge 85\\%$.")
-        if st.button(f" Move All {len(high_junk_df)} High-Confidence Junk to Quarantine Vault"):
+        if st.button(f"🗑️ Move All {len(high_junk_df)} High-Confidence Junk to Quarantine Vault"):
             count = quarantine_files(high_junk_df["id"].tolist())
             st.success(f"Moved {count} files to quarantine!")
             st.rerun()
@@ -89,21 +91,52 @@ def render_suggestions_page(db_path: Path | str = DB_PATH) -> None:
     st.divider()
 
     # 4. Interactive Review & Labelling Table
-    st.subheader(" Review & Feedback Table")
-    st.caption("Label files as **delete** or **keep** below. Your choices directly train your personalized ML model.")
+    st.subheader("📋 Review & Classification Table")
+    st.caption("Review explicit duplicate classifications and junk probabilities. Label files as **delete** or **keep** to train your ML model.")
 
-    display_df = df[["id", "junk_score", "name", "junk_reason", "user_label", "path"]].copy()
+    def classify_row(row):
+        if pd.notna(row.get("exact_group")) and row.get("is_keeper") == 0:
+            return "🎯 Exact Match (SHA-256)"
+        elif pd.notna(row.get("near_group")) and row.get("is_keeper") == 0:
+            return "🖼️ Near-Duplicate (pHash)"
+        elif pd.notna(row.get("semantic_group")) and row.get("is_keeper") == 0:
+            return "🧠 Semantic Cluster (CLIP)"
+        elif row.get("size") == 0:
+            return "📁 Empty File (0 B)"
+        elif float(row.get("junk_score", 0.0) or 0.0) >= 0.7:
+            return "⚠️ Stale / Junk"
+        return "📄 Unique File"
+
+    display_df = df.copy()
+    display_df["classification"] = display_df.apply(classify_row, axis=1)
     display_df["junk_score"] = display_df["junk_score"].apply(lambda s: f"{s:.1%}")
     display_df["user_label"] = display_df["user_label"].fillna("unlabelled")
+    display_df = display_df[["id", "classification", "junk_score", "name", "junk_reason", "user_label", "path"]]
+
+    # Interactive Category Filters
+    filter_choice = st.radio(
+        "Quick Filter:",
+        options=["All Items", "🎯 Exact Matches", "🖼️ Near-Duplicates", "⚠️ Stale / Junk", "📄 Unique Files"],
+        horizontal=True,
+    )
+    if "Exact" in filter_choice:
+        display_df = display_df[display_df["classification"].str.contains("Exact")]
+    elif "Near" in filter_choice:
+        display_df = display_df[display_df["classification"].str.contains("Near")]
+    elif "Stale" in filter_choice:
+        display_df = display_df[display_df["classification"].str.contains("Stale")]
+    elif "Unique" in filter_choice:
+        display_df = display_df[display_df["classification"].str.contains("Unique")]
 
     # Editable table
     edited_df = st.data_editor(
         display_df,
         column_config={
             "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
+            "classification": st.column_config.TextColumn("Classification", disabled=True, width="medium"),
             "junk_score": st.column_config.TextColumn("Junk Prob", disabled=True, width="small"),
             "name": st.column_config.TextColumn("File Name", disabled=True),
-            "junk_reason": st.column_config.TextColumn("Why is this junk? (Reason)", disabled=True, width="large"),
+            "junk_reason": st.column_config.TextColumn("Why is this flagged? (Reason)", disabled=True, width="large"),
             "user_label": st.column_config.SelectboxColumn(
                 "Feedback Label",
                 help="Mark file to teach the ML model",

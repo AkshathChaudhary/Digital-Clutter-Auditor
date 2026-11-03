@@ -129,3 +129,72 @@ def restore_file(
         raise
 
     return original_path
+
+
+def permanently_delete_file(
+    quarantine_id: int,
+    db_path: Path = DB_PATH,
+) -> tuple[bool, str, int]:
+    """
+    Permanently delete a file from the quarantine vault and disk.
+    This action cannot be undone. Reclaims disk space permanently.
+
+    Returns:
+        tuple: (success, filename, freed_bytes)
+    """
+    db.init_db(db_path)
+    record = db.get_quarantine_record(quarantine_id, db_path=db_path)
+    if record is None:
+        raise ValueError("Quarantine record not found.")
+
+    quarantine_path = Path(record["quarantine_path"])
+    original_path = Path(record["original_path"])
+    file_rec = db.get_file_by_id(record["file_id"], db_path=db_path)
+
+    freed_bytes = file_rec.size if file_rec else 0
+    filename = file_rec.name if file_rec else original_path.name
+
+    # 1. Unlink from quarantine vault on disk
+    if quarantine_path.is_file() or quarantine_path.exists():
+        quarantine_path.unlink()
+
+    # 2. Also ensure original path does not have an orphan copy
+    if original_path.is_file() or original_path.exists():
+        try:
+            original_path.unlink()
+        except Exception:
+            pass
+
+    # 3. Clean record from database
+    db.mark_quarantine_deleted(quarantine_id, record["file_id"], db_path=db_path)
+    return True, filename, freed_bytes
+
+
+def permanently_delete_all(
+    db_path: Path = DB_PATH,
+) -> tuple[int, int]:
+    """
+    Permanently purge all active files from the quarantine vault and disk.
+
+    Returns:
+        tuple: (count_deleted, total_bytes_freed)
+    """
+    conn = db.get_conn(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM quarantine_log WHERE restored_at IS NULL")
+        q_ids = [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+    total_count = 0
+    total_bytes = 0
+    for qid in q_ids:
+        try:
+            _, _, freed = permanently_delete_file(qid, db_path=db_path)
+            total_count += 1
+            total_bytes += freed
+        except Exception:
+            continue
+
+    return total_count, total_bytes

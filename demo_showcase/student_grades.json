@@ -1,0 +1,10 @@
+{
+  "student": "Akshath",
+  "semester": 7,
+  "subjects": [
+    {
+      "code": "CSE401",
+      "grade": "A"
+    }
+  ]
+}

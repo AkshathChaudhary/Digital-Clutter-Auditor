@@ -1,0 +1,7 @@
+{
+  "project": "ClutterIQ",
+  "environment": "production",
+  "database": "SQLite-WAL",
+  "max_workers": 4,
+  "logging_level": "INFO"
+}

@@ -11,6 +11,9 @@ Owned by Person B (Intelligence & Dashboard).
 
 # Must be imported first to apply Python 3.12 Windows SSL recursion patch
 import ssl_fix
+import os
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 from collections import defaultdict
 import logging
@@ -42,6 +45,9 @@ def get_clip_model(model_name: str = CLIP_MODEL_NAME) -> SentenceTransformer:
     """Load and return the CLIP model instance with automatic hardware acceleration."""
     global _CLIP_MODEL
     if _CLIP_MODEL is None:
+        import os
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         import torch
         if torch.cuda.is_available():
             device="cuda"

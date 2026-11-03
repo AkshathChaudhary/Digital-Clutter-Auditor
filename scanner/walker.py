@@ -107,22 +107,52 @@ def scan_directory(root: Path) -> tuple[list[FileRecord], list[dict]]:
     return records, errors
 
 
-def scan_folder(root_folder: str) -> int:
+def scan_folder(
+    root_folder: str,
+    *args,
+    clean_slate: bool = False,
+    db_path: Optional[Path] = None,
+    **kwargs,
+) -> int:
     """
     Scan a directory and store file metadata in SQLite.
     Returns the count of files indexed.
 
-    This is Person A's API - wraps scan_directory and saves to DB.
+    Args:
+        root_folder: Path to folder to scan.
+        clean_slate: If True, clears previous active files to provide a fresh audit.
+        db_path: Target SQLite database path (defaults to DB_PATH).
     """
     import db
     from config import DB_PATH
 
-    root = Path(root_folder).expanduser()
+    # Support clean_slate passed positionally or via kwargs
+    if args:
+        clean_slate = bool(args[0])
+    elif "clean_slate" in kwargs:
+        clean_slate = bool(kwargs["clean_slate"])
+
+    target_db = db_path if db_path is not None else DB_PATH
+    db.init_db(target_db)
+
+    root = Path(root_folder).expanduser().resolve()
+    if not root.exists():
+        raise FileNotFoundError(f"Folder does not exist: {root}")
+
+    if clean_slate:
+        # Clear previous active files for a fresh, isolated audit
+        conn = db.get_conn(target_db)
+        try:
+            with conn:
+                conn.execute("DELETE FROM files WHERE status = 'active'")
+        finally:
+            conn.close()
+
     records, errors = scan_directory(root)
 
     saved_count = 0
     for record in records:
-        db.upsert_file(record, db_path=DB_PATH)
+        db.upsert_file(record, db_path=target_db)
         saved_count += 1
 
     for error in errors:

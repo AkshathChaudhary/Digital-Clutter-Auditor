@@ -1,0 +1,4 @@
+Project Architecture Notes:
+- Frontend: Streamlit Multi-Page SPA
+- Database: SQLite with WAL pragma
+- ML Engine: Scikit-learn Random Forest + CLIP ViT-B-32

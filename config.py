@@ -32,7 +32,7 @@ CODE_EXTS = {"py", "js", "ts", "java", "cpp", "c", "h", "rs", "go", "json", "yam
 # Deduplication thresholds (tune on benchmark data)
 # ---------------------------------------------------------------------------
 PHASH_MAX_DISTANCE = 6          # Hamming distance for near-duplicates (pHash)
-CLIP_SIM_THRESHOLD = 0.92       # Cosine similarity for semantic groups (CLIP)
+CLIP_SIM_THRESHOLD = 0.88       # Cosine similarity for semantic groups (CLIP)
 MIN_SIZE_FOR_HASH = 1           # Minimum file size (bytes) to attempt hashing
 
 # ---------------------------------------------------------------------------

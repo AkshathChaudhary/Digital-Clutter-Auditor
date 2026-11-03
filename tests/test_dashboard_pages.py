@@ -74,11 +74,15 @@ def test_app_imports():
     import app.page_overview as p_over
     import app.page_privacy as p_priv
     import app.page_suggestions as p_sugg
+    import app.page_duplicates as p_dup
+    import app.page_quarantine as p_quar
 
     assert callable(main_app.main)
     assert callable(p_over.render_overview_page)
     assert callable(p_priv.render_privacy_page)
     assert callable(p_sugg.render_suggestions_page)
+    assert callable(p_dup.render_duplicates_page)
+    assert callable(p_quar.render_quarantine_page)
     print(" All Streamlit pages imported and resolved successfully!")
 
 

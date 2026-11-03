@@ -10,6 +10,7 @@ Owned by Person B (Intelligence & Dashboard).
 """
 
 from pathlib import Path
+import textwrap
 import streamlit as st
 
 from config import DB_PATH
@@ -51,7 +52,25 @@ def render_privacy_page(db_path: Path | str = DB_PATH) -> None:
         st.success(" **No privacy risks detected!** None of your active scanned files contain exposed Aadhaar, PAN, card numbers, or bank statements.")
         return
 
-    st.subheader(f" Identified Sensitive Files ({len(df)})")
+    # Threat Summary Header
+    st.markdown(
+        textwrap.dedent(
+            f"""
+            <div style="background: rgba(153, 27, 27, 0.2); border: 1.5px solid rgba(239, 68, 68, 0.4); border-radius: 12px; padding: 16px 20px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                    <div>
+                        <span style="background: #EF4444; color: white; padding: 3px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 700;">HIGH PRIORITY RISK</span>
+                        <h3 style="margin: 6px 0 2px 0; color: #FEE2E2;">⚠️ {len(df)} Sensitive File(s) Detected on Local Storage</h3>
+                        <p style="margin: 0; color: #FECACA; font-size: 0.9rem;">Identity and financial records identified with mathematical checksum verification (Verhoeff Aadhaar & Luhn Card validation).</p>
+                    </div>
+                </div>
+            </div>
+            """
+        ),
+        unsafe_allow_html=True,
+    )
+
+    st.subheader(f"📋 Identified Sensitive Files ({len(df)})")
 
     # Filters
     col_filter1, col_filter2 = st.columns([2, 2])
