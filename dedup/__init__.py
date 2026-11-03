@@ -1,2 +1,1 @@
-"""Deduplication package for ClutterIQ."""
-
+"""Exact duplicate detection module for ClutterIQ."""
