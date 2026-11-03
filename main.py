@@ -32,39 +32,38 @@ def cmd_scan(root_folder: str) -> None:
     logger.info(f"Scanning directory: {target}")
 
     try:
-        from scanner.walker import scan_directory
-
-        # 1. Initialize the database.
-        db.init_db(DB_PATH)
-
-        # 2. Discover files and create FileRecord objects.
-        records, errors = scan_directory(target)
-
-        # 3. Save every record into SQLite.
-        saved_count = 0
-
-        for record in records:
-            db.upsert_file(record, db_path=DB_PATH)
-            saved_count += 1
-
-        # 4. Report the results.
-        logger.info(
-            f"Scan completed. Indexed {saved_count:,} files "
-            f"into {DB_PATH}."
+        from scanner.walker import scan_folder
+        count = scan_folder(str(target))
+        logger.info(f"Scan finished. Indexed {count:,} files into {DB_PATH}.")
+    except ImportError:
+        logger.warning(
+            "Person A's 'scanner/walker.py' is not yet present. "
+            "Using fallback metadata scanner."
         )
+        from config import kind_from_ext
+        from models import FileRecord
 
-        logger.info(f"Files discovered: {len(records)}")
-        logger.info(f"Filesystem errors: {len(errors)}")
-
-        for error in errors:
-            logger.warning(
-                f"Could not process {error['path']}: {error['error']}"
-            )
-
-    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
-        logger.error(f"Invalid scan directory: {exc}")
-        sys.exit(1)
-
+        files_seen = 0
+        for p in target.rglob("*"):
+            if p.is_file() and not p.is_symlink():
+                try:
+                    stat = p.stat()
+                    ext = p.suffix.lower().lstrip(".")
+                    rec = FileRecord(
+                        path=str(p.resolve()),
+                        name=p.name,
+                        ext=ext,
+                        kind=kind_from_ext(ext),
+                        size=stat.st_size,
+                        created=stat.st_ctime,
+                        modified=stat.st_mtime,
+                        accessed=stat.st_atime,
+                    )
+                    db.upsert_file(rec, db_path=DB_PATH)
+                    files_seen += 1
+                except Exception as e:
+                    logger.debug(f"Skipping {p}: {e}")
+        logger.info(f"Fallback scan indexed {files_seen:,} files into {DB_PATH}.")
 
 
 def cmd_analyze() -> None:
@@ -130,6 +129,88 @@ def cmd_app() -> None:
     subprocess.run([sys.executable, "-m", "streamlit", "run", str(app_path)])
 
 
+# ---------------------------------------------------------------------------
+# Real-Time Directory Watcher (watchdog)
+# ---------------------------------------------------------------------------
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+
+
+class ClutterWatchHandler(FileSystemEventHandler):
+    """Monitors directory for newly downloaded/created files and runs fast audits."""
+
+    def __init__(self, db_path: Path | str = DB_PATH):
+        super().__init__()
+        self.db_path = db_path
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+
+        from config import is_cloud_stub
+        src_path = Path(event.src_path).resolve()
+        if is_cloud_stub(src_path):
+            return
+
+        print(f"\n[ClutterIQ Watcher] New file detected: {src_path.name}")
+
+        # 1. Exact hash check against existing files
+        try:
+            import hashlib
+            with open(src_path, "rb") as f:
+                h = hashlib.sha256(f.read()).hexdigest()
+            conn = db.get_conn(self.db_path)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT path FROM files WHERE sha256 = ? AND path != ? AND status != 'quarantined' LIMIT 1",
+                (h, str(src_path)),
+            )
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                print(f"   [ALERT] Exact duplicate of existing file: {Path(row[0]).name}")
+        except Exception as e:
+            logger.debug(f"Hash check error: {e}")
+
+        # 2. Check for PAN/Aadhaar/Card regex
+        ext = src_path.suffix.lower().lstrip(".")
+        if ext in {"txt", "csv", "log", "md"}:
+            try:
+                from privacy.sensitive import analyze_text_for_sensitive, extract_text_from_textfile
+                text = extract_text_from_textfile(src_path)
+                finding = analyze_text_for_sensitive(text)
+                if finding:
+                    p_type, masked = finding
+                    print(f"   [ALERT] Sensitive Personal Data Detected: {p_type.upper()} ({masked})")
+            except Exception as e:
+                logger.debug(f"Privacy check error: {e}")
+
+
+def cmd_watch(folder_path: str) -> None:
+    """Monitor folder in real-time for duplicates and privacy risks."""
+    import time
+    target = Path(folder_path).resolve()
+    if not target.exists():
+        logger.error(f"Target folder does not exist: {target}")
+        sys.exit(1)
+
+    db.init_db(DB_PATH)
+    logger.info(f"Starting real-time file watcher on {target}...")
+    event_handler = ClutterWatchHandler(db_path=DB_PATH)
+    observer = Observer()
+    observer.schedule(event_handler, str(target), recursive=True)
+    observer.start()
+
+    print(f"\n[ClutterIQ Watcher] Monitoring '{target}' for new files... (Press Ctrl+C to stop)")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+        print("\nWatcher stopped.")
+    observer.join()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="ClutterIQ: Privacy-Aware Local Digital Hygiene Auditor",
@@ -139,6 +220,10 @@ def main() -> None:
     # 'scan' command
     scan_parser = subparsers.add_parser("scan", help="Scan a directory and index file metadata")
     scan_parser.add_argument("--root", required=True, help="Absolute path to folder to scan")
+
+    # 'watch' command
+    watch_parser = subparsers.add_parser("watch", help="Monitor folder in real-time for duplicates and privacy risks")
+    watch_parser.add_argument("--folder", required=True, help="Folder to monitor (e.g. Downloads)")
 
     # 'analyze' command
     subparsers.add_parser("analyze", help="Run full deduplication, privacy, and ML scoring pipeline")
@@ -153,6 +238,8 @@ def main() -> None:
 
     if args.command == "scan":
         cmd_scan(args.root)
+    elif args.command == "watch":
+        cmd_watch(args.folder)
     elif args.command == "analyze":
         cmd_analyze()
     elif args.command == "evaluate":

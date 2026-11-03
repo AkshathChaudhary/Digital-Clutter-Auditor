@@ -105,3 +105,29 @@ def scan_directory(root: Path) -> tuple[list[FileRecord], list[dict]]:
             continue
 
     return records, errors
+
+
+def scan_folder(root_folder: str) -> int:
+    """
+    Scan a directory and store file metadata in SQLite.
+    Returns the count of files indexed.
+
+    This is Person A's API - wraps scan_directory and saves to DB.
+    """
+    import db
+    from config import DB_PATH
+
+    root = Path(root_folder).expanduser()
+    records, errors = scan_directory(root)
+
+    saved_count = 0
+    for record in records:
+        db.upsert_file(record, db_path=DB_PATH)
+        saved_count += 1
+
+    for error in errors:
+        import logging
+        logger = logging.getLogger("clutteriq")
+        logger.warning(f"Could not process {error['path']}: {error['error']}")
+
+    return saved_count
