@@ -82,7 +82,7 @@ def kind_from_ext(ext: str) -> str:
         return "archive"
     if ext in CODE_EXTS:
         return "code"
-    return "other"# Cloud stub detection (OneDrive / iCloud dehydrated placeholders)
+    return "other"
 
 
 # ---------------------------------------------------------------------------
