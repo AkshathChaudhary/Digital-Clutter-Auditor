@@ -82,8 +82,78 @@ def test_app_imports():
     print(" All Streamlit pages imported and resolved successfully!")
 
 
+def test_db_overview_kpis():
+    print("\nTesting db.get_overview_kpis SQL pushdown...")
+    temp_dir_kwargs = {}
+    if sys.version_info >= (3, 10):
+        temp_dir_kwargs["ignore_cleanup_errors"] = True
+
+    with tempfile.TemporaryDirectory(**temp_dir_kwargs) as tmpdir:
+        test_db = Path(tmpdir) / "test_clutteriq.db"
+        db.init_db(test_db)
+
+        MB = 1024 * 1024
+        now = time.time()
+        r1 = FileRecord(
+            path="a.jpg",
+            name="a.jpg",
+            ext="jpg",
+            size=100 * MB,
+            exact_group=10,
+            is_keeper=0,
+            junk_score=0.90,
+            privacy_type="pan",
+            modified=now,
+        )
+        r2 = FileRecord(
+            path="b.jpg",
+            name="b.jpg",
+            ext="jpg",
+            size=200 * MB,
+            exact_group=10,
+            is_keeper=1,
+            junk_score=0.10,
+            modified=now,
+        )
+        r3 = FileRecord(
+            path="c.txt",
+            name="c.txt",
+            ext="txt",
+            size=50 * MB,
+            junk_score=0.85,
+            modified=now,
+        )
+        r4 = FileRecord(
+            path="d.pdf",
+            name="d.pdf",
+            ext="pdf",
+            size=80 * MB,
+            junk_score=0.20,
+            modified=now,
+        )
+
+        for r in (r1, r2, r3, r4):
+            db.upsert_file(r, db_path=test_db)
+
+        tot_files, tot_bytes, rec_bytes, groups, priv = db.get_overview_kpis(
+            db_path=test_db
+        )
+        assert tot_files == 4, f"Expected 4 files, got {tot_files}"
+        assert tot_bytes == 430 * MB, f"Expected 430 MB, got {tot_bytes / MB} MB"
+        assert rec_bytes == 150 * MB, (
+            f"Expected 150 MB recoverable, got {rec_bytes / MB} MB"
+        )
+        assert priv == 1, f"Expected 1 privacy alert, got {priv}"
+
+        del r1, r2, r3, r4
+        gc.collect()
+
+    print(" db.get_overview_kpis SQL pushdown verified successfully!")
+
+
 if __name__ == "__main__":
     test_format_bytes()
     test_overview_metrics_calculation()
     test_app_imports()
+    test_db_overview_kpis()
 

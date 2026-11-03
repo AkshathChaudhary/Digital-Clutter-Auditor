@@ -239,6 +239,12 @@ def cluster_semantic(
     Returns:
         int: Number of semantic duplicate groups formed.
     """
+    # Fetch all active image records first
+    active_images = db.files_by_kind("image", status="active", db_path=db_path)
+    if not active_images:
+        logger.info("No active image files found in database. Skipping semantic clustering.")
+        return 0
+
     emb_file = Path(emb_path)
     if not emb_file.exists():
         logger.warning(f"Embedding file not found at {emb_file}. Run compute_embeddings first.")
@@ -248,8 +254,6 @@ def cluster_semantic(
     if len(embeddings) == 0:
         return 0
 
-    # Fetch all active image records that have a valid emb_index
-    active_images = db.files_by_kind("image", status="active", db_path=db_path)
     valid_images: List[FileRecord] = [
         img for img in active_images
         if img.emb_index is not None and 0 <= img.emb_index < len(embeddings)

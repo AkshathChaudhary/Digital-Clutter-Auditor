@@ -275,7 +275,8 @@ def predict_scores(
         try:
             with conn:
                 conn.executemany(
-                    "UPDATE files SET junk_socre = ?, junk_reason = ? WHERE id = ?",updates,
+                    "UPDATE files SET junk_score = ?, junk_reason = ? WHERE id = ?",
+                    updates,
                 )
         finally:
             conn.close()

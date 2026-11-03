@@ -71,7 +71,7 @@ def extract_metadata(file_path: Path) -> dict:
         "ext": ext,
         "kind": kind,
         "size": info.st_size,
-        "created": info.st_birthtime,
+        "created": getattr(info, "st_birthtime", info.st_ctime),
         "modified": info.st_mtime,
         "accessed": info.st_atime,
     }
