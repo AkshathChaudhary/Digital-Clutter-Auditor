@@ -5,10 +5,10 @@ without touching the pipeline code. Import as: from config import DB_PATH, PHASH
 """
 
 import os
+import stat
 from pathlib import Path
 
 QUARANTINE_DIR = Path("data/quarantine")
-import stat
 
 # ---------------------------------------------------------------------------
 # Paths (all relative to project root; created at runtime if missing)
@@ -16,7 +16,12 @@ import stat
 DB_PATH = Path("data") / "clutteriq.db"
 EMB_PATH = Path("data") / "embeddings.npy"
 MODEL_PATH = Path("data") / "junk_model.joblib"
-QUARANTINE_DIR = Path("quarantine")
+QUARANTINE_DIR = Path("data") / "quarantine"
+DATA_DIR = Path("data")
+BENCHMARK_DIR = DATA_DIR / "benchmark"
+BENCHMARK_FILES_DIR = BENCHMARK_DIR / "files"
+GROUND_TRUTH_PATH = BENCHMARK_DIR / "ground_truth.json"
+
 
 # ---------------------------------------------------------------------------
 # File-type classification (lowercase, no dot)
